@@ -21,17 +21,6 @@ library(DT)
 
 dictionary_path <- file.path("data", "SCAMP_data_dictionary.xlsx")
 
-if (!file.exists(dictionary_path)) {
-  stop(
-    paste0(
-      "Cannot find the SCAMP dictionary at:\n",
-      dictionary_path,
-      "\n\nEither place the workbook in data/SCAMP_data_dictionary.xlsx ",
-      "or set the SCAMP_DICT_PATH environment variable."
-    )
-  )
-}
-
 read_dictionary <- function(path) {
   read_excel(path, sheet = "Survey") |>
     mutate(
