@@ -23,18 +23,12 @@ dictionary_path <- file.path("data", "SCAMP_data_dictionary.xlsx")
 
 read_dictionary <- function(path) {
   read_excel(path, sheet = "Survey") |>
-    mutate(
-      Instance = as.character(Instance),
-      across(everything(), ~ ifelse(is.na(.x), "", as.character(.x)))
-    )
+    mutate(Instance = as.character(Instance),across(everything(), ~ ifelse(is.na(.x), "", as.character(.x))))
 }
 
 read_readme <- function(path) {
   read_excel(path, sheet = "README") |>
-    mutate(
-      Instance = as.character(Instance),
-      across(everything(), ~ ifelse(is.na(.x), "", as.character(.x)))
-    )
+    mutate(Instance = as.character(Instance), across(everything(), ~ ifelse(is.na(.x), "", as.character(.x))))
 }
 
 read_references <- function(path) {
@@ -63,7 +57,7 @@ ui <- page_navbar(
   fillable = FALSE,
 
   nav_panel(
-    "Variable Explorer",
+    "Survey",
     layout_sidebar(
       sidebar = sidebar(
         width = 330,
