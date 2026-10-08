@@ -22,6 +22,10 @@ read_biomarkers <- function(path) {
   read_sheet(path, "Biomarker and measurements")
 }
 
+read_env <- function(path) {
+  read_sheet(path, "Environmental exposure")
+}
+
 read_readme <- function(path) {
   read_sheet(path, "README")
 }
@@ -48,6 +52,48 @@ detail_line <- function(label, value) {
 
   tags$div(style = "margin-bottom:10px;", tags$strong(paste0(label, ": ")), tags$span(value))
 }
+
+related_instances <- function(data, description, meta) {
+  
+  # Find records with the same description
+  related <- data |>
+    filter(
+      nzchar(Description),
+      Description == description
+    ) |>
+    arrange(suppressWarnings(as.numeric(Instance)))
+  
+  # Only display if recorded in multiple instances
+  if (n_distinct(related$Instance) <= 1) return(NULL)
+  
+  # Create rows for the comparison table
+  related_rows <- lapply(seq_len(nrow(related)), function(i) {
+    tags$tr(
+      tags$td(instance_label(related$Instance[i], meta)),
+      tags$td(tags$code(related$`Column name`[i])),
+      tags$td(related$`Data type`[i])
+    )
+  })
+  
+  # Display comparison table
+  tagList(
+    hr(),
+    h5("Same question/description in other instances"),
+    
+    tags$table(
+      class = "table table-sm table-striped",
+      tags$thead(
+        tags$tr(
+          tags$th("Collection"),
+          tags$th("Column name"),
+          tags$th("Data type")
+        )
+      ),
+      tags$tbody(related_rows)
+    )
+  )
+}
+
 
 coding_box <- function(value) {
   if (is.null(value) || is.na(value) || !nzchar(trimws(value))) {
@@ -114,7 +160,7 @@ filter_dataset <- function(x, instance, cohort, top_level, level1, level2, datat
 
 
 # Reusable sidebar for Survey/Biomarker tabs
-dictionary_sidebar <- function(prefix = "", biomarker = FALSE) {
+dictionary_sidebar <- function(prefix = "", biomarker = FALSE, download_id = "download_results"){
   
   placeholder <- if (biomarker) {
     "Variable name, measurement, biomarker, topic..."
@@ -131,7 +177,7 @@ dictionary_sidebar <- function(prefix = "", biomarker = FALSE) {
     selectInput(paste0(prefix, "datatype"), "Data type", choices = "All", selected = "All"),
     actionButton(paste0(prefix, "reset_filters"), "Reset filters", width = "100%"),
     br(),br(),
-    downloadButton(if (biomarker) "download_biomarkers" else "download_results", "Download filtered CSV", width = "100%"))
+    downloadButton(download_id, "Download filtered CSV", width = "100%"))
 }
 
 
@@ -169,6 +215,20 @@ ui <- page_navbar(
     card(card_header(tags$strong("Selected biomarker or measurement")), uiOutput("biomarker_detail"))),
   
   # -----------------------------------------------------------------------
+  # Environmental exposures
+  # -----------------------------------------------------------------------
+  
+  nav_panel("Environmental exposures",
+            layout_sidebar(sidebar = dictionary_sidebar(prefix = "env_", biomarker = FALSE),
+                           card(full_screen = TRUE,
+                                card_header(div(style = "display:flex;justify-content:space-between;align-items:center;",
+                                                tags$strong("Environmental exposures"),
+                                                textOutput("env_result_count", inline = TRUE))),
+                                DTOutput("env_table"))),
+            br(),
+            card(card_header(tags$strong("Selected environmental exposures")), uiOutput("env_detail"))),
+  
+  # -----------------------------------------------------------------------
   # Collections
   # -----------------------------------------------------------------------
   
@@ -192,6 +252,7 @@ ui <- page_navbar(
 server <- function(input, output, session) {
   survey_data <- reactiveFileReader(5000, session, dictionary_path, read_dictionary)
   biomarker_data <- reactiveFileReader(5000, session, dictionary_path, read_biomarkers)
+  env_data <- reactiveFileReader(5000, session, dictionary_path, read_env)
   readme_data <- reactiveFileReader(5000, session, dictionary_path, read_readme)
   reference_data <- reactiveFileReader(5000, session, dictionary_path, read_references)
   
@@ -260,44 +321,11 @@ server <- function(input, output, session) {
     row <- current[selected, , drop = FALSE]
     meta <- readme_data()
     
-    related <- survey_data() |>
-      filter(
-        nzchar(Description),
-        Description == row$Description[[1]]
-      ) |>
-      arrange(as.numeric(Instance))
-    
-    related_ui <- NULL
-    
-    if (nrow(related) > 1) {
-      
-      related_rows <- lapply(seq_len(nrow(related)), function(i) {
-        tags$tr(
-          tags$td(instance_label(related$Instance[i], meta)),
-          tags$td(tags$code(related$`Column name`[i])),
-          tags$td(related$`Data type`[i])
-        )
-      })
-      
-      related_ui <- tagList(
-        hr(),
-        h5("Same question/description in other instances"),
-        
-        tags$table(
-          class = "table table-sm table-striped",
-          
-          tags$thead(
-            tags$tr(
-              tags$th("Collection"),
-              tags$th("Column name"),
-              tags$th("Data type")
-            )
-          ),
-          
-          tags$tbody(related_rows)
-        )
-      )
-    }
+    related_ui <- related_instances(
+      data = survey_data(),
+      description = row$Description[[1]],
+      meta = meta
+    )
     
     tagList(
       h4(tags$code(row$`Column name`[[1]])),
@@ -437,6 +465,12 @@ server <- function(input, output, session) {
     row <- current[selected, , drop = FALSE]
     meta <- readme_data()
     
+    related_ui <- related_instances(
+      data = biomarker_data(),
+      description = row$Description[[1]],
+      meta = meta
+    )
+    
     tagList(
       h4(tags$code(row$`Column name`[[1]])),
       h5(row$Description[[1]]),
@@ -452,10 +486,146 @@ server <- function(input, output, session) {
       detail_line("Level 1 topic", row$`Level 1 topic`[[1]]),
       detail_line("Level 2 topic", row$`Level 2 topic`[[1]]),
       detail_line("Data type", row$`Data type`[[1]]),
-      detail_line("Notes", row$Notes[[1]])
+      detail_line("Notes", row$Notes[[1]]),
+      related_ui
     )
   })
   
+  # =======================================================================
+  # Environmental exposures
+  # =======================================================================
+  
+  observe({
+    update_filter_choices(
+      session,
+      prefix = "env_",
+      x = env_data(),
+      meta = readme_data()
+    )
+  })
+  
+  
+  observeEvent(input$env_reset_filters, {
+    reset_filters(session, prefix = "env_")
+  })
+  
+  
+  filtered_exposures <- reactive({
+    
+    filter_dataset(
+      x = env_data(),
+      instance = input$env_instance,
+      cohort = input$env_cohort,
+      top_level = input$env_top_level,
+      level1 = input$env_level1,
+      level2 = input$env_level2,
+      datatype = input$env_datatype,
+      search = input$env_search,
+      
+      search_columns = c(
+        "Column name",
+        "Description",
+        "Notes",
+        "Cohort",
+        "Top Level",
+        "Level 1 topic",
+        "Level 2 topic"
+      )
+    )
+  })
+  
+  
+  output$env_result_count <- renderText({
+    paste(
+      format(nrow(filtered_exposures()), big.mark = ","),
+      "matching rows"
+    )
+  })
+  
+  
+  output$env_table <- renderDT({
+    
+    x <- filtered_exposures() |>
+      select(
+        `Column name`,
+        Instance,
+        `Data type`,
+        Description,
+        Notes,
+        Cohort,
+        `Level 1 topic`,
+        `Level 2 topic`
+      )
+    
+    datatable(
+      x,
+      rownames = FALSE,
+      selection = "single",
+      filter = "none",
+      escape = TRUE,
+      
+      options = list(
+        pageLength = 20,
+        lengthMenu = c(10, 20, 50, 100),
+        scrollX = TRUE,
+        autoWidth = TRUE,
+        
+        columnDefs = list(
+          list(width = "130px", targets = 0),
+          list(width = "90px", targets = 1),
+          list(width = "100px", targets = 2),
+          list(width = "300px", targets = 3),
+          list(width = "220px", targets = 4)
+        )
+      )
+    )
+  }, server = TRUE)
+  
+  
+  output$env_detail <- renderUI({
+    
+    selected <- input$env_table_rows_selected
+    
+    if (length(selected) != 1) {
+      return(
+        div(
+          class = "text-muted",
+          "Click one row in the table above to inspect the full environmental exposures metadata."
+        )
+      )
+    }
+    
+    current <- filtered_exposures()
+    if (selected > nrow(current)) return(NULL)
+    
+    row <- current[selected, , drop = FALSE]
+    meta <- readme_data()
+    
+    related_ui <- related_instances(
+      data = env_data(),
+      description = row$Description[[1]],
+      meta = meta
+    )
+    
+    tagList(
+      h4(tags$code(row$`Column name`[[1]])),
+      h5(row$Description[[1]]),
+      hr(),
+      
+      detail_line(
+        "Instance",
+        instance_label(row$Instance[[1]], meta)
+      ),
+      
+      detail_line("Cohort", row$Cohort[[1]]),
+      detail_line("Top level", row$`Top Level`[[1]]),
+      detail_line("Level 1 topic", row$`Level 1 topic`[[1]]),
+      detail_line("Level 2 topic", row$`Level 2 topic`[[1]]),
+      detail_line("Data type", row$`Data type`[[1]]),
+      detail_line("Notes", row$Notes[[1]]),
+      related_ui
+    )
+  })
   
   # =======================================================================
   # COLLECTIONS / REFERENCES
@@ -534,6 +704,25 @@ server <- function(input, output, session) {
     }
   )
   
+  output$download_exposures <- downloadHandler(
+    
+    filename = function() {
+      paste0(
+        "SCAMP_environmental_exposures_filtered_",
+        Sys.Date(),
+        ".csv"
+      )
+    },
+    
+    content = function(file) {
+      write.csv(
+        filtered_exposures(),
+        file,
+        row.names = FALSE,
+        na = ""
+      )
+    }
+  )
   
 }
 
